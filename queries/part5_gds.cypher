@@ -83,8 +83,44 @@ CALL gds.graph.drop('userSimilarity');
 MATCH ()-[sim:SIMILAR]-() DELETE sim;
 
 
-WITH gds.util.asNode(nodeId) AS u, communityId
-MATCH (g:Genre)<-[:IN_GENRE]-(m:Movie)<-[r:RATED]-(u)
-WITH collect(u.userId) AS communityMembers, collect(g), communityId
-WHERE r.rating = maxRating
-WITH communityId, communityMembers, collect(g.name) AS genreCommunity
+
+// 5.3. 
+// Проєкція потрібна та сама, що і для Louvain — пересотворіть, якщо видалили
+MATCH (u1:User)-[r1:RATED]->(m:Movie)<-[r2:RATED]-(u2:User)
+WHERE r1.rating = 5 AND r2.rating = 5 AND id(u1) < id(u2)
+WITH u1, u2, count(m) AS weight
+WITH u1, u2, weight
+ORDER BY weight DESC
+LIMIT 50000
+MERGE (u1)-[sim:SIMILAR]-(u2)
+SET sim.weight = weight;
+
+CALL gds.graph.project(
+  'userGraph',
+  'User',
+  { SIMILAR: { orientation: 'UNDIRECTED', properties: 'weight' } }
+)
+YIELD graphName, nodeCount, relationshipCount;
+
+// МІЙ КОД
+// 1-й крок - 
+MATCH p = (u1:User)-[:SIMILAR*2..4]-(u2:User)
+RETURN u1.userId AS sourceUser, 
+       u2.userId AS targetUser, 
+       length(p) AS pathLength
+LIMIT 20;
+
+// 2-й крок - Алгоритм Дейкстри
+MATCH (source:User {userId: 10}),
+      (target:User {userId: 4354})
+CALL gds.shortestPath.dijkstra.stream('userGraph', {
+  sourceNode: id(source),
+  targetNode: id(target),
+  relationshipWeightProperty: 'weight'
+})
+YIELD nodeIds, totalCost
+RETURN
+  totalCost,
+  [nodeId IN nodeIds | gds.util.asNode(nodeId).userId] AS route;
+
+CALL gds.graph.drop('userGraph');
